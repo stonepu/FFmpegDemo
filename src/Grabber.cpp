@@ -36,7 +36,7 @@ int Grabber::open(const std::string& filename)
 		}
 	}
 
-	//此处需要既有视频又有音频，否则抛出异常
+	//此处需要文件既有视频又有音频，否则抛出异常
 	if (videoIndex == -1 || audioIndex == -1) {
 		avformat_close_input(&fctx);
 		throw std::runtime_error("not find vidoe or audio");

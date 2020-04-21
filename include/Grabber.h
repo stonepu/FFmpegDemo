@@ -11,6 +11,9 @@ extern "C" {
 #include "util.h"
 #include <exception>
 
+using std::cout;
+using std::endl;
+
 class Grabber {
 public:
 	Grabber();
