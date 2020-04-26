@@ -3,6 +3,7 @@
 void fillAudio(void* userData, uint8_t* data, int len) {
 	Processor* processor = (Processor*)userData;
 	processor->writeData(data, len);
+	SDL_Delay(5);
 }
 
 Processor::Processor()
@@ -31,19 +32,36 @@ void Processor::writeData(uint8_t * data, int len)
 {
 	SDL_memset(data, 0, len);
 
-	std::lock_guard<std::mutex> locker(amtx);
-	if (aList.empty()) return;
-	auto frame = aList.back();
-	aList.pop_back();
+	AVPacket* pkt = nullptr;
 
-	auto newFrame = convertAFrame(frame);
-	auto buffSize = av_samples_get_buffer_size(newFrame->linesize, newFrame->channels, newFrame->nb_samples, (AVSampleFormat)newFrame->format, 0);
-	if (buffSize != len) {
-		av_log(NULL, AV_LOG_INFO, "buffSize != len \n");
+	{
+		std::lock_guard<std::mutex> locker(amtx);
+		//std::cout << "debug: aList.size(): " << aList.size() << std::endl;
+		if (aList.empty()) {
+			std::cout << "aList is empty" << std::endl;
+			//SDL_MixAudio(data, data, len, SDL_MIX_MAXVOLUME);
+			return;
+
+		}
+		pkt = aList.back();
+		aList.pop_back();
+
+	}
+	if (!pkt) return;
+
+	auto frame = grabber->decode(pkt);
+	if (frame && frame->format != -1) {
+		auto convertFrame = convertAFrame(frame);
+		//auto newFrame = convertAFrame(frame);
+		auto buffSize = av_samples_get_buffer_size(convertFrame->linesize, convertFrame->channels, convertFrame->nb_samples, (AVSampleFormat)convertFrame->format, 0);
+		if (buffSize != len) {
+			av_log(NULL, AV_LOG_INFO, "buffSize != len \n");
+		}
+
+		SDL_MixAudio(data, convertFrame->data[0], buffSize, SDL_MIX_MAXVOLUME);
 	}
 
-	SDL_MixAudio(data, newFrame->data[0], buffSize, SDL_MIX_MAXVOLUME);
-	av_frame_free(&newFrame);
+	//av_frame_free(&frame);
 }
 
 void Processor::start()
@@ -65,48 +83,28 @@ void Processor::start()
 
 void Processor::startGrab()
 {
-	bool needSlow = false;
 	while (1) {
-		if ( aList.size() < 10) {
-			needSlow = false;
+		if ( aList.size() < 5) {
 			try {
 				auto pkt = grabber->grab();
-				if (pkt->stream_index == grabber->getAudioIndex()) {
-					//av_free_packet(pkt);
-					//TODO 完成音频播放及音画同步
-					auto frame = grabber->decode(pkt);
-					//av_packet_unref(pkt);
-					if (frame && frame->format != -1) {
-					//	//av_log(NULL, AV_LOG_INFO, "grab a frame\n");
-						std::lock_guard<std::mutex> locker(amtx);
-					//	amtx.lock();
-						aList.push_back(frame);						
-						//amtx.unlock();
-					}
+				if (pkt->stream_index == grabber->getAudioIndex()) {					
+					std::lock_guard<std::mutex> locker(amtx);
+					aList.push_back(pkt);
 				}
 				if (pkt->stream_index == grabber->getVideoIndex()) {
-					auto frame = grabber->decode(pkt);
-					av_packet_unref(pkt);
-					vmtx.lock();
-					if (frame && frame->format != -1) {
-						vList.push_back(std::move(frame));
-						SDL_Event event;
-						event.type = REFRESH_EVENT;
-						SDL_PushEvent(&event);
+					{
+						std::lock_guard<std::mutex> locker(vmtx);
+						vList.push_back(std::move(pkt));
 					}
-					vmtx.unlock();
+					SDL_Event event;
+					event.type = REFRESH_EVENT;
+					SDL_PushEvent(&event);
 				}
 			}
 			catch (exception e) {
 				cout << e.what() << endl;
 				break;
 			}
-		}
-		else {
-			needSlow = true;
-		}
-		if (needSlow) {
-			std::this_thread::sleep_for(std::chrono::milliseconds(this->duration / 5));
 		}
 	}
 }
@@ -119,24 +117,27 @@ void Processor::startDraw()
 		SDL_PollEvent(&event);
 		auto currDuration = duration;
 		if (event.type == REFRESH_EVENT) {
-			AVFrame* frame = nullptr;
+			AVPacket* pkt = nullptr;
 			{
 				std::lock_guard<std::mutex> locker(vmtx);
 				if (vList.size() > 0) {
-					frame = vList.front();
+					pkt = vList.front();
 					vList.pop_front();
 				}
-				//std::cout << "listSize: " << vList.size() << std::endl;
 				//控制音画同步;
-				if (vList.size() > 20) currDuration = duration*0.5;
-				else if (vList.size() > 10)currDuration = duration * 0.6;
-				else if (vList.size() >= 5) currDuration = duration * 0.7;
-				else if (vList.size() > 2) currDuration = duration * 0.9;
+				if (vList.size() > 20) currDuration = duration*0.4;
+				else if (vList.size() > 10)currDuration = duration * 0.5;
+				else if (vList.size() >= 5) currDuration = duration * 0.6;
+				else if (vList.size() > 2) currDuration = duration * 0.7;
 			}
-			if (frame) {
-				auto nFrame = convertVFrame(frame);
-				render->renderVideo(nFrame, duration);
-				std::this_thread::sleep_for(std::chrono::milliseconds(currDuration));
+			if (pkt) {
+				auto frame = grabber->decode(pkt);
+				if (frame && frame->format != -1) {
+					auto nFrame = convertVFrame(frame);
+					render->renderVideo(nFrame, duration);
+					std::this_thread::sleep_for(std::chrono::milliseconds(currDuration));
+				}
+
 			}			
 		}
 	}
@@ -153,6 +154,8 @@ int Processor::iniSwsCtx(AVFrame* preFrame)
 	newFrame->format = this->pixFmt;
 
 
+
+
 	cout << "pre->width: " << preFrame->width << endl;
 	cout << "pre->height" << preFrame->height << endl;
 	cout << "pre->fmt" << preFrame->format << endl;
@@ -161,8 +164,8 @@ int Processor::iniSwsCtx(AVFrame* preFrame)
 	cout << "f->fmt" << this->pixFmt << endl;
 	this->swsCtx = sws_getCachedContext(swsCtx, preFrame->width, preFrame->height, (AVPixelFormat)preFrame->format, this->width, this->height, this->pixFmt, SWS_FAST_BILINEAR, NULL, NULL, NULL);
 
-	uint8_t *out_buffer = (uint8_t *)av_malloc(av_image_get_buffer_size(this->pixFmt, this->width, this->height, 0) * sizeof(uint8_t));
-	av_image_fill_arrays(newFrame->data, newFrame->linesize, out_buffer, this->pixFmt, this->width, this->height, 0);
+	uint8_t *out_buffer = (uint8_t *)av_malloc(av_image_get_buffer_size(this->pixFmt, this->width, this->height, 1) * sizeof(uint8_t));
+	av_image_fill_arrays(newFrame->data, newFrame->linesize, out_buffer, this->pixFmt, this->width, this->height, 1);
 	return 0;
 }
 
@@ -183,14 +186,7 @@ int Processor::iniSwrCtx(AVFrame * frame)
 AVFrame * Processor::convertVFrame(AVFrame * preFrame)
 {
 	if (!swsCtx) iniSwsCtx(preFrame);
-	newFrame->data[0] = preFrame->data[0];
-	newFrame->data[1] = preFrame->data[1];
-	newFrame->data[2] = preFrame->data[2];
-	newFrame->data[3] = preFrame->data[3];
-	newFrame->linesize[0] = preFrame->linesize[0];
-	newFrame->linesize[1] = preFrame->linesize[1];
-	newFrame->linesize[2] = preFrame->linesize[2];
-	newFrame->linesize[3] = preFrame->linesize[3];
+
 	sws_scale(swsCtx, preFrame->data, preFrame->linesize, 0, preFrame->height, newFrame->data, newFrame->linesize);
 	av_frame_free(&preFrame);
 	return newFrame;

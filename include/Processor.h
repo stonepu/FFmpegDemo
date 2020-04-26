@@ -37,7 +37,8 @@ private:
 	SwsContext*		swsCtx;
 	SwrContext*		swrCtx;
 	long			duration = 33;
-	list<AVFrame*> vList{}, aList{};
+	//list<AVFrame*>  
+	list<AVPacket*> vList{}, aList{};;
 	std::mutex		vmtx;
 	std::mutex		amtx;
 

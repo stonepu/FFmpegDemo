@@ -4,6 +4,8 @@
 
 #undef main
 
+//#pragma comment( linker, "/subsystem:\"windows\" /entry:\"mainCRTStartup\"" )
+
 using std::cout;
 using std::endl;
 int main() {

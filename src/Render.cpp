@@ -29,7 +29,7 @@ void AVRender::openAudio(int sampleRate, Uint8 channel, uint16_t samples, void* 
 	audioSpec.freq = sampleRate;
 	audioSpec.format = AUDIO_S16SYS;
 	audioSpec.channels = channel;
-	audioSpec.silence = 0;
+	//audioSpec.silence = 0;
 	audioSpec.samples = samples;
 	audioSpec.callback = fill_audio;
 	audioSpec.userdata = userdata;

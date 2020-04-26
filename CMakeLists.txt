@@ -89,7 +89,7 @@ message(LIBiconv=${LIBiconv})
 
 
 # 将源代码添加到此项目的可执行文件。
-add_executable (FFmpegDemo 
+add_executable (${PROJECT_NAME} 
 	src/main.cpp
 	src/Grabber.cpp
 	src/Render.cpp
